@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.coverage
+htmlcov/
+
+# User-uploaded profile images
+uploads/avatars/*
+!uploads/avatars/.gitkeep
