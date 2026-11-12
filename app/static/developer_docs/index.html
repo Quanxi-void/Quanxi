@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <meta name="description" content="ManhwaHQ API reference and interactive manga data playground.">
+  <title>ManhwaHQ API — Developer Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/api-docs/assets/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/api-docs" aria-label="ManhwaHQ API home">
+        <span class="brand-mark">M<span>H</span></span>
+        <span class="brand-copy"><strong>MANHWAHQ</strong><small>DEVELOPER PORTAL</small></span>
+      </a>
+      <div class="sidebar-label">DOCUMENTATION</div>
+      <button class="nav-link active" data-page="overview"><span class="nav-icon">⌂</span> Overview</button>
+      <button class="nav-link" data-page="playground"><span class="nav-icon">⌘</span> API Playground <span class="nav-tag">LIVE</span></button>
+      <div class="sidebar-label endpoint-label">DATA ENDPOINTS <span id="endpointCount">09</span></div>
+      <div class="endpoint-nav" id="endpointNav"></div>
+      <div class="sidebar-bottom">
+        <div class="status-line"><span class="status-dot" id="apiStatusDot"></span><span id="apiStatusText">Checking API status…</span></div>
+        <div class="sidebar-foot">ManhwaHQ API <span id="versionLabel">v0.6.0</span></div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="Toggle navigation">☰</button>
+        <div class="breadcrumbs"><span>Developers</span><b>/</b><strong id="crumbCurrent">Overview</strong></div>
+        <div class="top-actions">
+          <a class="source-link" href="https://manhwahq.com" target="_blank" rel="noreferrer">Source website ↗</a>
+          <span class="version-chip">API <b id="topVersion">v0.6.0</b></span>
+        </div>
+      </header>
+
+      <section class="content-wrap">
+        <section id="overviewPage" class="page active">
+          <div class="hero">
+            <div class="eyebrow"><span class="eyebrow-line"></span> DEVELOPER DOCUMENTATION</div>
+            <h1>Build with the<br><span>ManhwaHQ API.</span></h1>
+            <p class="hero-copy">A clean, structured gateway to manga discovery, series metadata, chapter lists and reader pages. Explore the endpoints and make live requests right here.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary" id="heroPlayground">Open playground <span>→</span></button>
+              <a class="btn btn-ghost" href="#quick-start">Quick start <span>↓</span></a>
+            </div>
+            <div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div>
+            <div class="hero-glow"></div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card"><span class="stat-kicker">PUBLIC DATA ROUTES</span><strong>09</strong><small>GET endpoints</small></div>
+            <div class="stat-card"><span class="stat-kicker">RESPONSE FORMAT</span><strong>JSON</strong><small>Consistent response envelope</small></div>
+            <div class="stat-card"><span class="stat-kicker">PLAYGROUND</span><strong>LIVE</strong><small>Requests against your API</small></div>
+            <div class="stat-card"><span class="stat-kicker">AUTH REQUIRED</span><strong>NO</strong><small>For public manga data routes</small></div>
+          </div>
+
+          <div class="section-heading" id="quick-start"><div><div class="eyebrow">GETTING STARTED</div><h2>Make your first request</h2></div><span class="section-index">01 / START HERE</span></div>
+          <div class="quick-card">
+            <div class="quick-card-head"><div><span class="live-dot"></span> Base URL</div><span class="mono muted">API v1</span></div>
+            <div class="base-url-row"><code id="baseUrlDisplay">https://your-domain.com/api/v1</code><button class="icon-btn" id="copyBase" title="Copy base URL">▣</button></div>
+            <div class="code-head"><span>cURL</span><button class="copy-btn" data-copy="curlExample">Copy</button></div>
+            <pre class="code-block" id="curlExample">curl "https://your-domain.com/api/v1/home"</pre>
+            <p class="hint">Change the API base URL in the Playground to point requests at your local, Render or Ubuntu deployment.</p>
+          </div>
+
+          <div class="section-heading"><div><div class="eyebrow">EXPLORE THE API</div><h2>Data endpoints</h2></div><span class="section-index">02 / REFERENCE</span></div>
+          <div class="endpoint-cards" id="overviewEndpoints"></div>
+
+          <div class="section-heading"><div><div class="eyebrow">STANDARD RESPONSE</div><h2>Predictable JSON envelope</h2></div></div>
+          <div class="response-preview">
+            <div class="response-top"><span class="response-dot"></span><span>200 OK</span><span class="mono muted">application/json</span></div>
+            <pre>{
+  <i>"success"</i>: <em>true</em>,
+  <i>"data"</i>: { <span class="comment">// endpoint-specific result</span> },
+  <i>"meta"</i>: {
+    <i>"request_id"</i>: <em>"req_..."</em>,
+    <i>"timestamp"</i>: <em>"2026-11-07T..."</em>,
+    <i>"source"</i>: <em>"manhwahq.com"</em>,
+    <i>"cached"</i>: <em>false</em>
+  },
+  <i>"pagination"</i>: <em>null</em>,
+  <i>"error"</i>: <em>null</em>
+}</pre>
+          </div>
+          <div class="notice"><span>✦</span><div><strong>Public manga data only</strong><p>This developer portal documents catalogue and reader-data endpoints. Account, authentication, profile and user-library routes are intentionally not included in the documentation or playground.</p></div></div>
+        </section>
+
+        <section id="endpointPage" class="page">
+          <div class="endpoint-heading">
+            <div class="eyebrow" id="endpointCategory">MANGA DATA</div>
+            <h1 id="endpointTitle">Homepage</h1>
+            <p id="endpointDescription"></p>
+            <div class="endpoint-path"><span class="method-badge">GET</span><code id="endpointPath"></code><button class="icon-btn" id="copyPath" title="Copy endpoint path">▣</button></div>
+          </div>
+          <div class="endpoint-layout">
+            <div class="endpoint-main">
+              <div class="tabs"><button class="tab active" data-tab="guide">Guide</button><button class="tab" data-tab="play">Try it</button><button class="tab" data-tab="schema">Response</button></div>
+              <div class="tab-panel active" id="guidePanel">
+                <h2>Overview</h2><p id="guideText"></p>
+                <h2>Parameters</h2><div id="parameterTable"></div>
+                <div class="callout-small"><b>ℹ</b><span>All public data endpoints use GET requests and return the standard ManhwaHQ JSON response envelope.</span></div>
+                <button class="btn btn-primary" id="tryEndpoint">Try this endpoint <span>→</span></button>
+              </div>
+              <div class="tab-panel" id="playPanel">
+                <div class="play-panel-heading"><div><h2>Request builder</h2><p>Configure parameters and send a live request.</p></div><span class="live-pill"><i></i> LIVE</span></div>
+                <div class="field-group"><label for="playBaseUrl">API BASE URL</label><input id="playBaseUrl" type="url" spellcheck="false"></div>
+                <div id="requestFields"></div>
+                <div class="request-preview"><div class="preview-head"><span>REQUEST URL</span><button class="copy-btn" id="copyRequest">Copy</button></div><code id="requestUrlPreview"></code></div>
+                <button class="btn btn-primary send-btn" id="sendRequest"><span>▶</span> Send request</button>
+                <div class="result-area" id="resultArea">
+                  <div class="result-head"><div><h2>Response</h2><span class="muted">Your response will appear here.</span></div></div>
+                  <div class="empty-result"><span>⌁</span><p>Ready when you are.</p><small>Send a request to inspect the JSON response.</small></div>
+                </div>
+              </div>
+              <div class="tab-panel" id="schemaPanel"><h2>Example response</h2><p class="muted">Representative response structure. Actual fields depend on the source data.</p><pre class="schema-code" id="exampleResponse"></pre></div>
+            </div>
+            <aside class="endpoint-aside"><div class="aside-card"><span class="aside-kicker">REQUEST</span><strong>GET</strong><p>Public read-only data endpoint.</p><div class="aside-divider"></div><span class="aside-kicker">AUTHENTICATION</span><strong class="green-text">Not required</strong><p>No account token is needed for this endpoint.</p><div class="aside-divider"></div><span class="aside-kicker">CONTENT TYPE</span><strong>application/json</strong></div><div class="aside-card help-card"><span class="help-icon">?</span><strong>Need help?</strong><p>Check the parameter descriptions or use the live playground to inspect the actual response.</p><button class="text-btn" id="asidePlay">Open playground →</button></div></aside>
+          </div>
+        </section>
+
+        <section id="playgroundPage" class="page">
+          <div class="eyebrow">INTERACTIVE API EXPLORER</div>
+          <h1 class="page-title">API Playground<span>.</span></h1>
+          <p class="page-lead">Test public ManhwaHQ manga endpoints against a live deployment. No generated examples, no mocked results — just real API responses.</p>
+          <div class="playground-shell">
+            <div class="playground-toolbar"><div><span class="live-dot"></span><strong>Request workspace</strong></div><span class="mono muted">READ-ONLY · GET</span></div>
+            <div class="playground-grid">
+              <div class="play-config">
+                <div class="field-group"><label for="globalBaseUrl">API BASE URL</label><input id="globalBaseUrl" type="url" spellcheck="false"></div>
+                <div class="field-group"><label for="globalEndpoint">SELECT ENDPOINT</label><select id="globalEndpoint"></select></div>
+                <div id="globalFields"></div>
+                <div class="request-preview"><div class="preview-head"><span>REQUEST URL</span><button class="copy-btn" id="copyGlobalRequest">Copy</button></div><code id="globalRequestPreview"></code></div>
+                <button class="btn btn-primary send-btn" id="sendGlobalRequest">▶ Send request</button>
+              </div>
+              <div class="play-output">
+                <div class="output-toolbar"><div><strong>Response</strong><span class="response-status" id="globalStatus">Waiting</span></div><button class="copy-btn" id="copyResponse">Copy JSON</button></div>
+                <div class="output-meta" id="globalMeta">Status, duration and response size will appear here.</div>
+                <pre class="output-json" id="globalResponse"><span class="json-placeholder">// Your API response will appear here.</span></pre>
+              </div>
+            </div>
+          </div>
+          <div class="notice playground-notice"><span>✦</span><div><strong>Only public manga-data endpoints are available here.</strong><p>Authentication, registration, profiles, bookmarks, history and other user-account routes are deliberately excluded from this playground.</p></div></div>
+          <div class="history-wrap"><div class="section-heading"><div><div class="eyebrow">LOCAL SESSION</div><h2>Recent requests</h2></div><button class="text-btn" id="clearHistory">Clear history</button></div><div id="requestHistory" class="request-history"><p class="muted">No requests in this browser session yet.</p></div></div>
+        </section>
+
+        <footer class="footer"><span>© <span id="year"></span> ManhwaHQ API</span><span>Built for developers who love manga. <b>✦</b></span></footer>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/api-docs/assets/app.js" defer></script>
+</body>
+</html>
