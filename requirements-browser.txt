@@ -1,2 +1,0 @@
-# Optional JavaScript-rendered page fallback
-playwright>=1.47.0
