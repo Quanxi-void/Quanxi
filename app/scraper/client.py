@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import time
+import logging
 from urllib.parse import urljoin, urlparse, urlencode
 
 import httpx
@@ -12,6 +13,7 @@ import httpx
 from app.core.config import settings
 from app.services.cache import cache
 
+logger = logging.getLogger(__name__)
 
 class SourceFetchError(Exception):
     def __init__(self, message: str, status_code: int | None = None):
@@ -189,6 +191,16 @@ class SourceClient:
                     raise
                 except (httpx.HTTPError, OSError) as exc:
                     last_error = exc
+                    logger.warning(
+                        "SOURCE_REQUEST_ATTEMPT_FAILED | "
+                        "url=%s | attempt=%s/%s | "
+                        "exception=%s | error=%r",
+                        url,
+                        attempt + 1,
+                        settings.source_max_retries + 1,
+                        type(exc).__name__,
+                        exc,
+                    )
                     if attempt < settings.source_max_retries:
                         await asyncio.sleep(self._retry_delay(attempt))
 
@@ -203,7 +215,11 @@ class SourceClient:
                         f"HTTP fetch failed ({last_error}); optional browser fallback failed ({browser_error}). "
                         "Install the browser extra and Chromium if browser fallback is enabled."
                     ) from browser_error
-            raise SourceFetchError(f"Unable to fetch the source page: {last_error}") from last_error
+            raise SourceFetchError(
+                f"Unable to fetch source page. "
+                f"Exception={type(last_error).__name__ if last_error else 'Unknown'}; "
+                f"Details={last_error!r}"
+            ) from last_error
 
         if not use_cache:
             return await fetch()
