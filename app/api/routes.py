@@ -1,4 +1,5 @@
 import uuid
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
@@ -15,7 +16,7 @@ from app.auth.dependencies import optional_user
 from app.users.repository import record_chapter_read
 
 router = APIRouter()
-
+logger = logging.getLogger(__name__)
 
 def meta(request: Request, url: str, cached: bool = False) -> ResponseMeta:
     return ResponseMeta(
@@ -26,16 +27,57 @@ def meta(request: Request, url: str, cached: bool = False) -> ResponseMeta:
     )
 
 
-async def fetch_or_502(path: str, use_cache: bool = True):
+
+async def fetch_or_502(
+    path: str,
+    use_cache: bool = True,
+    request: Request | None = None,
+):
+    request_id = (
+        getattr(request.state, "request_id", "unknown")
+        if request else "unknown"
+    )
+
     try:
-        return await source_client.get_text(path, use_cache=use_cache)
+        return await source_client.get_text(
+            path,
+            use_cache=use_cache,
+        )
+
     except SourceFetchError as exc:
+        logger.error(
+            "UPSTREAM_SOURCE_FAILURE | request_id=%s | "
+            "path=%s | status=%s | error=%s | cause=%r",
+            request_id,
+            path,
+            exc.status_code,
+            str(exc),
+            exc.__cause__,
+        )
+
         if exc.status_code == 404:
-            raise HTTPException(status_code=404, detail="Source page not found.")
+            raise HTTPException(
+                status_code=404,
+                detail="Source page not found."
+            )
+
         if exc.status_code == 429:
-            raise HTTPException(status_code=503, detail="The manga source is temporarily rate limiting requests.")
-        raise HTTPException(status_code=502, detail="The manga source is temporarily unavailable.")
+            raise HTTPException(
+                status_code=503,
+                detail="The manga source is temporarily rate limiting requests."
+            )
+
+        raise HTTPException(
+            status_code=502,
+            detail="The manga source is temporarily unavailable."
+        )
+
     except ValueError as exc:
+        logger.exception(
+            "UPSTREAM_URL_ERROR | request_id=%s | path=%s",
+            request_id,
+            path,
+        )
         raise HTTPException(status_code=400, detail=str(exc))
 
 
@@ -88,7 +130,7 @@ async def health(request: Request, check_source: bool = Query(False, description
 
 @router.get("/home", tags=["Discovery"], response_model=APIResponse[HomeData], summary="Get homepage sections")
 async def home(request: Request, refresh: bool = Query(False, description="Bypass cached source HTML")):
-    html, url, cached = await fetch_or_502("/", use_cache=not refresh)
+    html, url, cached = await fetch_or_502("/", use_cache=not refresh, request=request)
     data = await run_in_threadpool(parse_home, html, url)
     return APIResponse(data=data, meta=meta(request, url, cached))
 
