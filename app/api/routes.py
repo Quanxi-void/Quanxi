@@ -1,5 +1,6 @@
 import uuid
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
@@ -11,6 +12,7 @@ from app.scraper.client import source_client, SourceFetchError
 from app.scraper.parsers import (parse_home, parse_browse, parse_manga_detail, parse_reader,
     normalize_source_card, normalize_source_detail, normalize_source_reader)
 from app.services.cache import cache
+from app.services.database import get_database
 from app.services.rate_limiter import rate_limiter
 from app.auth.dependencies import optional_user
 from app.users.repository import record_chapter_read
@@ -25,6 +27,108 @@ def meta(request: Request, url: str, cached: bool = False) -> ResponseMeta:
         cached=cached,
         source_url=url,
     )
+
+
+async def _apply_card_overrides(items: list[dict]) -> list[dict]:
+    """Apply locally managed title/visibility overrides without mutating source data."""
+    slugs = [str(item.get("slug")) for item in items if item.get("slug")]
+    if not slugs:
+        return items
+    try:
+        docs = await get_database().manga_overrides.find({"slug": {"$in": slugs}}).to_list(length=min(len(slugs), 500))
+    except Exception:
+        logger.warning("Could not load manga overrides; returning upstream cards unchanged.", exc_info=True)
+        return items
+    overrides = {doc["slug"]: doc for doc in docs}
+    result = []
+    for original in items:
+        item = dict(original)
+        override = overrides.get(item.get("slug"), {})
+        if override.get("hidden"):
+            continue
+        if override.get("title"):
+            item["title"] = override["title"]
+        if override.get("manga_type"):
+            item["type"] = override["manga_type"]
+        result.append(item)
+    return result
+
+
+def _chapter_key(value) -> str:
+    if value is None:
+        return ""
+    try:
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(number)
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        match = re.search(r"(-?\d+(?:\.\d+)?)", text)
+        if match:
+            return _chapter_key(match.group(1))
+        return text
+
+
+async def _ensure_manga_visible(slug: str) -> None:
+    try:
+        hidden = await get_database().manga_overrides.find_one({"slug": slug, "hidden": True}, {"_id": 1})
+    except Exception:
+        logger.warning("Could not verify manga visibility override for %s.", slug, exc_info=True)
+        return
+    if hidden:
+        raise HTTPException(status_code=404, detail="Manga not found.")
+
+
+async def _apply_detail_overrides(slug: str, data: dict) -> dict:
+    try:
+        db = get_database()
+        override = await db.manga_overrides.find_one({"slug": slug})
+        chapter_overrides = await db.chapter_overrides.find({"manga_slug": slug, "hidden": True}).to_list(length=1000)
+    except Exception:
+        logger.warning("Could not load manga overrides; returning upstream detail unchanged.", exc_info=True)
+        return data
+    if override and override.get("hidden"):
+        raise HTTPException(status_code=404, detail="Manga not found.")
+    if override:
+        if override.get("title"):
+            data.setdefault("title", {})["primary"] = override["title"]
+        if override.get("description") is not None:
+            data["description"] = override["description"]
+        metadata = data.setdefault("metadata", {})
+        if override.get("status"):
+            metadata["status"] = override["status"]
+        if override.get("manga_type"):
+            metadata["type"] = override["manga_type"]
+        if override.get("genres") is not None:
+            metadata["genres"] = override["genres"]
+    hidden_numbers = {_chapter_key(item.get("chapter_number")) for item in chapter_overrides}
+    if hidden_numbers:
+        data["chapters"] = [c for c in data.get("chapters", [])
+                            if _chapter_key(c.get("chapter_number") if c.get("chapter_number") is not None else c.get("title", "")) not in hidden_numbers]
+    return data
+
+
+async def _apply_homepage_settings(data: dict) -> dict:
+    keys = ["hero", "trending", "latest_updates", "popular", "recommended"]
+    defaults = {"visible_sections": keys, "section_titles": {}, "section_order": keys}
+    try:
+        doc = await get_database().homepage_settings.find_one({"_id": "global"}) or {}
+    except Exception:
+        logger.warning("Could not load homepage settings; using source defaults.", exc_info=True)
+        doc = {}
+    visible = [key for key in doc.get("visible_sections", defaults["visible_sections"]) if key in keys]
+    order = [key for key in doc.get("section_order", defaults["section_order"]) if key in keys]
+    titles = doc.get("section_titles", {})
+    for key in keys:
+        if key not in visible:
+            data[key] = []
+        else:
+            data[key] = await _apply_card_overrides(data.get(key, []))
+    data["sections"] = [
+        {"key": key, "title": titles.get(key) or key.replace("_", " ").title(), "items": data.get(key, [])}
+        for key in order if key in visible
+    ]
+    data["admin_settings"] = {"visible_sections": visible, "section_titles": titles, "section_order": order}
+    return data
 
 
 
@@ -94,6 +198,23 @@ async def fetch_source_data(params: dict):
     return None, payload, url, cached
 
 
+@router.get("/site-config", tags=["System"], summary="Get public website configuration")
+async def public_site_config(request: Request):
+    try:
+        doc = await get_database().site_settings.find_one({"_id": "global"}) or {}
+    except Exception:
+        logger.warning("Could not load public site settings; using defaults.", exc_info=True)
+        doc = {}
+    return APIResponse(data={
+        "maintenance_mode": bool(doc.get("maintenance_mode", False)),
+        "registration_enabled": bool(doc.get("registration_enabled", True)),
+        "announcement_enabled": bool(doc.get("announcement_enabled", False)),
+        "announcement_title": doc.get("announcement_title", ""),
+        "announcement_body": doc.get("announcement_body", ""),
+        "announcement_link": doc.get("announcement_link", ""),
+    }, meta=meta(request, settings.source_base_url))
+
+
 @router.head("/health", tags=["System"], include_in_schema=False)
 async def health_head():
     """Lightweight HEAD probe for uptime monitors (UptimeRobot etc.). No body, no database or source calls."""
@@ -132,6 +253,7 @@ async def health(request: Request, check_source: bool = Query(False, description
 async def home(request: Request, refresh: bool = Query(False, description="Bypass cached source HTML")):
     html, url, cached = await fetch_or_502("/", use_cache=not refresh, request=request)
     data = await run_in_threadpool(parse_home, html, url)
+    data = await _apply_homepage_settings(data)
     return APIResponse(data=data, meta=meta(request, url, cached))
 
 
@@ -153,6 +275,7 @@ async def browse(
     source_items, payload, data_url, cached = await fetch_source_data(params)
     if isinstance(source_items, list):
         items = [normalize_source_card(item) for item in source_items if isinstance(item, dict)]
+        items = await _apply_card_overrides(items)
         total = payload.get("total") if isinstance(payload, dict) else None
         total_pages = payload.get("pages") if isinstance(payload, dict) else None
         available = payload.get("availableGenres", []) if isinstance(payload, dict) else []
@@ -166,6 +289,7 @@ async def browse(
     path = "/browse?" + urlencode(params)
     html, url, html_cached = await fetch_or_502(path)
     data = await run_in_threadpool(parse_browse, html, url)
+    data["items"] = await _apply_card_overrides(data.get("items", []))
     total = len(data["items"])
     data["applied_filters"] = {k: v for k, v in params.items() if k not in {"page", "per_page"}}
     pagination = Pagination(page=page, per_page=per_page, total=None, total_pages=None,
@@ -184,6 +308,7 @@ async def search(
     source_items, payload, data_url, cached = await fetch_source_data(params)
     if isinstance(source_items, list):
         items = [normalize_source_card(item) for item in source_items if isinstance(item, dict)]
+        items = await _apply_card_overrides(items)
         total = payload.get("total") if isinstance(payload, dict) else None
         total_pages = payload.get("pages") if isinstance(payload, dict) else None
         data = {"items": items, "available_genres": payload.get("availableGenres", []) if isinstance(payload, dict) else [],
@@ -196,6 +321,7 @@ async def search(
     path = "/browse?" + urlencode(params)
     html, url, html_cached = await fetch_or_502(path)
     data = await run_in_threadpool(parse_browse, html, url)
+    data["items"] = await _apply_card_overrides(data.get("items", []))
     total = len(data["items"])
     data["applied_filters"] = {"search": q}
     pagination = Pagination(page=page, per_page=per_page, total=None, total_pages=None,
@@ -225,6 +351,7 @@ async def genre_manga(
     source_items, payload, data_url, cached = await fetch_source_data(params)
     if isinstance(source_items, list):
         items = [normalize_source_card(item) for item in source_items if isinstance(item, dict)]
+        items = await _apply_card_overrides(items)
         total_pages = payload.get("pages") if isinstance(payload, dict) else None
         data = {"items": items, "available_genres": payload.get("availableGenres", []) if isinstance(payload, dict) else [],
                 "sort_options": [], "applied_filters": {"genre": genre}}
@@ -236,6 +363,7 @@ async def genre_manga(
     path = "/browse?" + urlencode(params)
     html, url, html_cached = await fetch_or_502(path)
     data = await run_in_threadpool(parse_browse, html, url)
+    data["items"] = await _apply_card_overrides(data.get("items", []))
     data["applied_filters"] = {"genre": genre}
     total = len(data["items"])
     pagination = Pagination(page=page, per_page=per_page, total=None, total_pages=None,
@@ -261,11 +389,15 @@ async def manga_details(request: Request, slug: str):
                 data["images"]["banner"] = html_data.get("images", {}).get("banner")
         except HTTPException:
             pass
+        data["recommendations"] = await _apply_card_overrides(data.get("recommendations", []))
+        data = await _apply_detail_overrides(slug, data)
         return APIResponse(data=data, meta=meta(request, data_url, cached))
     html, url, html_cached = await fetch_or_502(path)
     data = await run_in_threadpool(parse_manga_detail, html, url)
     if not data.get("slug"):
         data["slug"] = slug
+    data["recommendations"] = await _apply_card_overrides(data.get("recommendations", []))
+    data = await _apply_detail_overrides(slug, data)
     return APIResponse(data=data, meta=meta(request, url, html_cached))
 
 
@@ -276,6 +408,7 @@ async def manga_chapters(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
 ):
+    await _ensure_manga_visible(slug)
     raw, payload, data_url, cached = await fetch_source_data({"id": slug})
     if isinstance(raw, dict):
         detail = normalize_source_detail(raw, f"{settings.source_base_url.rstrip('/')}/title/{slug}")
@@ -289,6 +422,12 @@ async def manga_chapters(
         html, url, cached = await fetch_or_502(f"/title/{slug}")
         detail = await run_in_threadpool(parse_manga_detail, html, url)
         items = detail["chapters"]
+    try:
+        hidden_docs = await get_database().chapter_overrides.find({"manga_slug": slug, "hidden": True}).to_list(length=1000)
+        hidden = {_chapter_key(item.get("chapter_number")) for item in hidden_docs}
+        items = [item for item in items if _chapter_key(item.get("chapter_number") if item.get("chapter_number") is not None else item.get("title", "")) not in hidden]
+    except Exception:
+        logger.warning("Could not load chapter visibility overrides; returning source chapters.", exc_info=True)
     total = len(items)
     start = (page - 1) * per_page
     page_items = items[start:start + per_page]
@@ -302,15 +441,26 @@ async def manga_chapters(
 
 @router.get("/manga/{slug}/recommendations", tags=["Manga"], response_model=APIResponse[RecommendationData], summary="Get related manga recommendations")
 async def manga_recommendations(request: Request, slug: str):
+    await _ensure_manga_visible(slug)
     html, url, cached = await fetch_or_502(f"/title/{slug}")
     detail = await run_in_threadpool(parse_manga_detail, html, url)
-    return APIResponse(data={"manga_slug": slug, "items": detail["recommendations"]}, meta=meta(request, url, cached))
+    items = await _apply_card_overrides(detail.get("recommendations", []))
+    return APIResponse(data={"manga_slug": slug, "items": items}, meta=meta(request, url, cached))
 
 
 @router.get("/manga/{slug}/chapters/{chapter_number}", tags=["Reader"], response_model=APIResponse[ReaderData], summary="Get reader pages for a chapter")
 async def chapter_reader(request: Request, slug: str, chapter_number: str, user=Depends(optional_user)):
+    await _ensure_manga_visible(slug)
     if not chapter_number.replace(".", "", 1).isdigit():
         raise HTTPException(status_code=400, detail="Chapter number must be numeric.")
+    try:
+        hidden = await get_database().chapter_overrides.find_one({"manga_slug": slug, "chapter_number": _chapter_key(chapter_number), "hidden": True})
+        if hidden:
+            raise HTTPException(status_code=404, detail="Chapter not found.")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Could not verify chapter visibility override.", exc_info=True)
     path = f"/title/{slug}/chapter/{chapter_number}"
     raw, payload, data_url, cached = await fetch_source_data({"id": slug, "chapter": chapter_number})
     if isinstance(raw, dict):
