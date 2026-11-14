@@ -31,11 +31,14 @@ async def _issue_tokens(user: dict, request: Request):
 @router.post("/register", response_model=APIResponse[TokenPair], status_code=201)
 async def register(payload: RegisterInput, request: Request):
     db = get_database()
+    site_settings = await db.site_settings.find_one({"_id": "global"}, {"registration_enabled": 1})
+    if site_settings and site_settings.get("registration_enabled") is False:
+        raise HTTPException(status_code=403, detail="New registrations are currently disabled.")
     doc = {
         "email": str(payload.email).lower(), "username": payload.username,
         "display_name": payload.display_name, "password_hash": hash_password(payload.password),
         "bio": None, "avatar": {"kind": "preset", "value": "Avatar-20(1).jpg", "url": f"{settings.api_prefix}/static/avatars/Avatar-20(1).jpg"},
-        "is_public": True, "is_active": True, "created_at": utcnow(),
+        "is_public": True, "is_active": True, "role": "user", "created_at": utcnow(),
         "last_activity_at": utcnow(), "last_read_at": None,
     }
     try:
