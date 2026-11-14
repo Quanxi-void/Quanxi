@@ -1,4 +1,5 @@
 import hmac
+import asyncio
 import time
 import uuid
 import logging
@@ -13,10 +14,11 @@ from app.core.config import settings
 from app.models.common import APIError
 from app.api.routes import router
 from app.scraper.client import source_client
-from app.services.database import connect_database, close_database
+from app.services.database import connect_database, close_database, get_database
 from app.services.rate_limiter import rate_limiter
 from app.auth.routes import router as auth_router
 from app.users.routes import router as users_router
+from app.admin.router import router as admin_router
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -77,10 +79,56 @@ app.add_middleware(
 )
 
 
+_site_settings_snapshot: dict = {}
+_site_settings_snapshot_until = 0.0
+_site_settings_lock = asyncio.Lock()
+
+
+async def _get_site_settings_snapshot() -> dict:
+    """Short per-worker cache; a settings change propagates across workers within 5 seconds."""
+    global _site_settings_snapshot, _site_settings_snapshot_until
+    now = time.monotonic()
+    if now < _site_settings_snapshot_until:
+        return _site_settings_snapshot
+    async with _site_settings_lock:
+        now = time.monotonic()
+        if now < _site_settings_snapshot_until:
+            return _site_settings_snapshot
+        try:
+            _site_settings_snapshot = await get_database().site_settings.find_one({"_id": "global"}) or {}
+        except Exception:
+            logger.warning("Could not refresh cached site settings.", exc_info=True)
+            _site_settings_snapshot = {}
+        _site_settings_snapshot_until = time.monotonic() + 5.0
+        return _site_settings_snapshot
+
+
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request.state.request_id = request.headers.get("X-Request-ID", f"req_{uuid.uuid4().hex[:16]}")
     started = time.perf_counter()
+
+    # Maintenance mode is cached briefly to avoid a MongoDB read on every request.
+    # Keep health, public config, authentication and the private control plane reachable.
+    path = request.url.path
+    prefix = settings.api_prefix.rstrip("/")
+    exempt = {f"{prefix}/health", f"{prefix}/site-config", f"{prefix}/auth/login",
+              f"{prefix}/auth/refresh", f"{prefix}/auth/logout"}
+    if (path.startswith(prefix + "/") and path not in exempt
+            and not path.startswith(f"{prefix}/_control/")):
+        site_config = await _get_site_settings_snapshot()
+        if site_config.get("maintenance_mode"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False, "data": None,
+                    "meta": {"request_id": request.state.request_id, "source": "manhwavoid"},
+                    "pagination": None,
+                    "error": {"code": "MAINTENANCE_MODE", "message": "The website is temporarily undergoing maintenance."},
+                },
+                headers={"Retry-After": "60"},
+            )
+
     decision = await rate_limiter.check(request)
 
     if decision.unavailable:
@@ -214,6 +262,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(router, prefix=settings.api_prefix)
 app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(users_router, prefix=settings.api_prefix)
+app.include_router(admin_router, prefix=settings.api_prefix)
 
 _avatar_dir = Path(settings.avatar_upload_dir)
 _avatar_dir.mkdir(parents=True, exist_ok=True)
