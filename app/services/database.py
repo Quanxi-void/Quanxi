@@ -68,6 +68,13 @@ async def connect_database() -> None:
         "expires_at", expireAfterSeconds=0
     )
 
+    # Private administration data and editor overrides. These collections are
+    # created by indexes only; no existing user/content documents are rewritten.
+    await _database.admin_audit_logs.create_index([("created_at", DESCENDING)])
+    await _database.admin_audit_logs.create_index([("actor_id", ASCENDING), ("created_at", DESCENDING)])
+    await _database.manga_overrides.create_index([("slug", ASCENDING)], unique=True)
+    await _database.chapter_overrides.create_index([("manga_slug", ASCENDING), ("chapter_number", ASCENDING)], unique=True)
+
 
 async def close_database() -> None:
     global _client, _database
